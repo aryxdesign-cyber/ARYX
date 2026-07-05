@@ -421,6 +421,22 @@
 .res-item:hover{transform:translateX(3px)}
 @media(prefers-reduced-motion:reduce){.logo::after,.gauge-bar i::after,.verdict::after{animation:none}}
 </style>
+<style id="aryxHeroPolish">
+/* directional scroll-reveal variants (used alongside .reveal) */
+.reveal-left,.reveal-right,.reveal-scale{transition:.8s cubic-bezier(.2,.7,.2,1)}
+.reveal-left{opacity:0;transform:translateX(-46px)}
+.reveal-right{opacity:0;transform:translateX(46px)}
+.reveal-scale{opacity:0;transform:translateY(20px) scale(.94)}
+.reveal-left.in,.reveal-right.in,.reveal-scale.in{opacity:1;transform:none}
+/* cursor-follow spotlight behind the hero copy */
+.hero .wrap{position:relative;z-index:1}
+.hero-glow{position:absolute;inset:0;z-index:0;pointer-events:none;opacity:0;transition:opacity .5s ease;background:radial-gradient(560px circle at var(--x,50%) var(--y,32%),rgba(20,241,149,.13),transparent 62%)}
+.hero-glow.show{opacity:1}
+/* scroll parallax targets */
+.hero .badge,.hero h1,.hero .lede,.hero .hero-cta,.hero .micro,.float-term{will-change:transform,opacity}
+@media(prefers-reduced-motion:reduce){.reveal-left,.reveal-right,.reveal-scale{transition:none}}
+@media(max-width:760px),(pointer:coarse){.hero-glow{display:none}}
+</style>
 </head>
 <body>
 <div id="aryxLanding">
@@ -455,6 +471,7 @@
 </nav>
 
 <header class="hero">
+  <div class="hero-glow" id="heroGlow"></div>
   <div class="wrap">
     <div class="badge"><span class="pulse"></span> Live technical signals · 6 timeframes</div>
     <h1>The chart,<br><span class="grad">decoded.</span></h1>
@@ -830,8 +847,16 @@
 
 
   /* ---------- scroll reveal ---------- */
+  // swap the plain fade-up for a directional slide on grid cards, so feature/step/plan
+  // rows feel less uniform when they enter (feature cards alternate L/R, plans scale in)
+  document.querySelectorAll('.feat.reveal, .step.reveal').forEach((el,i)=>{
+    el.classList.remove('reveal'); el.classList.add(i%2===0?'reveal-left':'reveal-right');
+  });
+  document.querySelectorAll('.plan.reveal').forEach(el=>{
+    el.classList.remove('reveal'); el.classList.add('reveal-scale');
+  });
   const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}})},{threshold:.12});
-  document.querySelectorAll('.reveal').forEach((el,i)=>{el.style.transitionDelay=(i%6*0.05)+'s';io.observe(el);});
+  document.querySelectorAll('.reveal,.reveal-left,.reveal-right,.reveal-scale').forEach((el,i)=>{el.style.transitionDelay=(i%6*0.05)+'s';io.observe(el);});
 
   /* ---------- cursor-tilt on hero terminal ---------- */
   const tilt=document.getElementById('tilt'), glass=document.getElementById('termGlass');
@@ -843,6 +868,39 @@
     });
     tilt.addEventListener('mouseleave',()=>{glass.style.transform='rotateX(8deg)';});
   }
+
+  /* ---------- hero cursor-follow spotlight ---------- */
+  (function(){
+    const hero=document.querySelector('.hero'), glow=document.getElementById('heroGlow');
+    if(!hero||!glow||!window.matchMedia('(pointer:fine)').matches) return;
+    hero.addEventListener('mousemove',e=>{
+      const r=hero.getBoundingClientRect();
+      glow.style.setProperty('--x',((e.clientX-r.left)/r.width*100)+'%');
+      glow.style.setProperty('--y',((e.clientY-r.top)/r.height*100)+'%');
+      glow.classList.add('show');
+    });
+    hero.addEventListener('mouseleave',()=>glow.classList.remove('show'));
+  })();
+
+  /* ---------- hero scroll parallax (copy drifts/fades, terminal card recedes) ---------- */
+  (function(){
+    const hero=document.querySelector('.hero');
+    if(!hero || window.matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+    const layers=[...hero.querySelectorAll('.badge,h1,.lede,.hero-cta,.micro')];
+    const term=document.getElementById('tilt');
+    let ticking=false;
+    function update(){
+      ticking=false;
+      const p=Math.min(Math.max(scrollY/(hero.offsetHeight||1),0),1);
+      layers.forEach((el,i)=>{
+        el.style.transform=`translateY(${p*36*(1+i*0.12)}px)`;
+        el.style.opacity=String(Math.max(0,1-p*1.2));
+      });
+      if(term) term.style.transform=`translateY(${p*64}px) scale(${1-p*0.05})`;
+    }
+    addEventListener('scroll',()=>{if(!ticking){ticking=true;requestAnimationFrame(update);}},{passive:true});
+    update();
+  })();
 
   /* ---------- feature/plan card glow follow ---------- */
   document.querySelectorAll('.tilt-card').forEach(c=>{
@@ -3341,359 +3399,6 @@ if(installBtn){
 }
 window.addEventListener('appinstalled',()=>{if(installBtn)installBtn.style.display='none';});
 </script>
-<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
-<script>(function(){
-  // fallback if primary CDN fails
-  if(typeof THREE==='undefined'){
-    var s=document.createElement('script');
-    s.src='https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js';
-    s.onload=function(){if(window.__init3d)window.__init3d();};
-    document.head.appendChild(s);
-  }
-})();</script>
-<script>(function(){
-  document.getElementById('yr').textContent=new Date().getFullYear();
-
-  /* ---------- live BTC price + per-second pulse (honest: real price, steady demo verdict) ---------- */
-  (function(){
-    const el=document.getElementById('btcPrice');
-    const glass=document.getElementById('termGlass');
-    if(!el)return;
-    let price=64820, lastShown=price, haveReal=false;
-    const fmt=n=>'$'+Math.round(n).toLocaleString('en-US');
-
-    async function fetchReal(){
-      // try Binance, then CoinGecko; fail silently (keeps last value)
-      try{
-        const r=await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT');
-        const j=await r.json(); if(j&&j.price){price=parseFloat(j.price);haveReal=true;return;}
-      }catch(e){}
-      try{
-        const r=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
-        const j=await r.json(); if(j&&j.bitcoin){price=j.bitcoin.usd;haveReal=true;}
-      }catch(e){}
-    }
-
-    function render(newVal){
-      const up=newVal>=lastShown;
-      el.textContent=fmt(newVal);
-      el.classList.remove('up','down'); void el.offsetWidth;
-      el.classList.add(up?'up':'down');
-      if(glass){glass.classList.remove('tick'); void glass.offsetWidth; glass.classList.add('tick');}
-      lastShown=newVal;
-    }
-
-    // per-second "live" tick: if we have a real price, jitter it microscopically so it visibly updates;
-    // every 15s pull a fresh real price.
-    let secs=0;
-    function tick(){
-      secs++;
-      let shown=price;
-      if(haveReal){
-        // tiny realistic wobble (±0.03%) just for visual liveness between real pulls
-        shown=price*(1+(Math.random()-0.5)*0.0006);
-      }else{
-        // no API (e.g. local file) — gentle drift so it still looks live
-        price=price*(1+(Math.random()-0.5)*0.0008); shown=price;
-      }
-      render(shown);
-      if(secs%15===0) fetchReal();
-    }
-    fetchReal().finally(()=>{ render(price); setInterval(tick,1000); });
-  })();
-
-  /* ---------- scroll progress bar ---------- */
-  (function(){
-    const bar=document.getElementById('scrollbar');
-    function upd(){const h=document.documentElement;const sc=h.scrollTop/((h.scrollHeight-h.clientHeight)||1);bar.style.width=(sc*100)+'%';}
-    addEventListener('scroll',upd,{passive:true}); upd();
-  })();
-
-  /* ---------- live ticker (mock signals, honest demo) ---------- */
-  (function(){
-    const track=document.getElementById('tickTrack'); if(!track)return;
-    const coins=[['BTC','BUY','b'],['ETH','HOLD','h'],['SOL','BUY','b'],['BNB','SELL','s'],['XRP','HOLD','h'],
-      ['ADA','BUY','b'],['AVAX','BUY','b'],['DOGE','SELL','s'],['LINK','HOLD','h'],['DOT','BUY','b'],
-      ['MATIC','SELL','s'],['ATOM','BUY','b']];
-    const colorOf={b:'var(--g2)',s:'var(--sell)',h:'#f0b429'};
-    function row(){
-      return coins.map(([sym,v,c])=>{
-        const conv=(c==='h'?30+Math.floor(Math.random()*15):55+Math.floor(Math.random()*40));
-        return `<span class="tk"><span class="dot" style="background:${colorOf[c]}"></span><span class="sym">${sym}</span><span class="${c}">${v}</span><span style="color:var(--faint)">${conv}%</span></span>`;
-      }).join('');
-    }
-    // duplicate the row so the -50% loop is seamless
-    track.innerHTML=row()+row();
-  })();
-
-  /* ---------- count-up numbers on reveal ---------- */
-  function countUp(el){
-    const raw=el.getAttribute('data-count'); const dec=raw.includes('.')?2:0;
-    const target=parseFloat(raw); const prefix=el.getAttribute('data-prefix')||''; const suffix=el.getAttribute('data-suffix')||'';
-    let t0=null; const dur=1200;
-    function step(ts){if(!t0)t0=ts;const p=Math.min((ts-t0)/dur,1);const e=1-Math.pow(1-p,3);
-      el.textContent=prefix+(target*e).toFixed(dec)+suffix; if(p<1)requestAnimationFrame(step);}
-    requestAnimationFrame(step);
-  }
-  const countIO=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){countUp(e.target);countIO.unobserve(e.target);}})},{threshold:.6});
-  document.querySelectorAll('[data-count]').forEach(el=>countIO.observe(el));
-
-  /* ---------- magnetic buttons ---------- */
-  if(window.matchMedia('(pointer:fine)').matches){
-    document.querySelectorAll('.btn-primary,.tg-btn,.nav-cta,.featured-btn').forEach(btn=>{
-      btn.addEventListener('mousemove',e=>{const r=btn.getBoundingClientRect();
-        const x=(e.clientX-r.left-r.width/2)*0.25, y=(e.clientY-r.top-r.height/2)*0.35;
-        btn.style.transform=`translate(${x}px,${y}px)`;});
-      btn.addEventListener('mouseleave',()=>{btn.style.transform='';});
-    });
-  }
-
-  /* ---------- cinematic intro (2D canvas, ~3.5s) ---------- */
-  (function(){
-    const overlay=document.getElementById('intro');
-    const cv=document.getElementById('introCanvas');
-    const logo=document.getElementById('introLogo');
-    const skip=document.getElementById('introSkip');
-    if(!overlay||!cv) return;
-    const reduce=window.matchMedia('(prefers-reduced-motion:reduce)').matches;
-    if(reduce){overlay.classList.add('done');return;}
-
-    const ctx=cv.getContext('2d');
-    let W,H,DPR=Math.min(devicePixelRatio||1,2);
-    function size(){W=cv.width=innerWidth*DPR;H=cv.height=innerHeight*DPR;cv.style.width=innerWidth+'px';cv.style.height=innerHeight+'px';}
-    size(); addEventListener('resize',size);
-
-    const G='#14f195', P='#9945ff', C='#22d3ee';
-    const DURATION=3500;
-    let start=performance.now(), done=false;
-
-    // build a rising chart path (honest: an energetic up-move, drawn live)
-    const N=42;
-    const pts=[];
-    let val=0.32;
-    for(let i=0;i<N;i++){
-      val += (Math.random()*0.04-0.012) + 0.011*Math.sin(i/4); // gentle upward drift w/ wobble
-      val=Math.max(0.12,Math.min(0.82,val));
-      pts.push(val);
-    }
-    // smooth slightly
-    for(let k=0;k<2;k++)for(let i=1;i<N-1;i++)pts[i]=(pts[i-1]+pts[i]+pts[i+1])/3;
-
-    // particles for the surge
-    const parts=[];
-
-    function ease(t){return t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;}
-
-    function frame(now){
-      const t=Math.min((now-start)/DURATION,1);
-      ctx.clearRect(0,0,W,H);
-
-      const cx=W/2, baseY=H*0.66, chartW=Math.min(W*0.62,820*DPR), x0=cx-chartW/2;
-      const colW=chartW/N;
-
-      // phase timings
-      const pLine=Math.min(t/0.45,1);        // 0-45%: line draws
-      const pCandle=Math.min(Math.max((t-0.30)/0.45,0),1); // 30-75%: candles rise
-      const pSurge=Math.min(Math.max((t-0.62)/0.30,0),1);  // 62-92%: surge+particles
-      const pLogo=Math.min(Math.max((t-0.66)/0.34,0),1);   // 66-100%: logo in
-
-      const yOf=v=>baseY-(v*H*0.4);
-
-      // --- candlesticks rising ---
-      if(pCandle>0){
-        const shown=Math.floor(pCandle*N);
-        for(let i=0;i<=shown&&i<N;i++){
-          const localT=Math.min((pCandle*N - i),1); if(localT<=0)continue;
-          const x=x0+i*colW+colW*0.5;
-          const up=i===0?true:pts[i]>=pts[i-1];
-          const top=yOf(pts[i]);
-          const h=(20+Math.abs((pts[i]-(pts[i-1]??pts[i])))*H*0.4)*ease(localT);
-          const bodyH=Math.max(6*DPR,h);
-          ctx.globalAlpha=0.55*ease(localT);
-          ctx.fillStyle=up?G:P;
-          ctx.fillRect(x-colW*0.28, top, colW*0.56, bodyH);
-          // wick
-          ctx.globalAlpha=0.4*ease(localT);
-          ctx.fillStyle='#44506a';
-          ctx.fillRect(x-1*DPR, top-8*DPR*ease(localT), 2*DPR, bodyH+16*DPR*ease(localT));
-        }
-        ctx.globalAlpha=1;
-      }
-
-      // --- the line drawing itself ---
-      if(pLine>0){
-        const shown=pLine*(N-1);
-        ctx.beginPath();
-        ctx.lineWidth=3*DPR; ctx.lineJoin='round'; ctx.lineCap='round';
-        const grad=ctx.createLinearGradient(x0,0,x0+chartW,0);
-        grad.addColorStop(0,C); grad.addColorStop(.5,G); grad.addColorStop(1,P);
-        ctx.strokeStyle=grad;
-        ctx.shadowColor=G; ctx.shadowBlur=18*DPR;
-        for(let i=0;i<=shown;i++){
-          const x=x0+i*colW+colW*0.5, y=yOf(pts[Math.min(i,N-1)]);
-          if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);
-        }
-        ctx.stroke(); ctx.shadowBlur=0;
-        // leading dot
-        const li=Math.min(Math.floor(shown),N-1);
-        const lx=x0+shown*colW+colW*0.5, ly=yOf(pts[li]);
-        ctx.beginPath(); ctx.fillStyle='#fff'; ctx.shadowColor=G; ctx.shadowBlur=22*DPR;
-        ctx.arc(lx,ly,4.5*DPR,0,7); ctx.fill(); ctx.shadowBlur=0;
-
-        // spawn surge particles from the tip during surge phase
-        if(pSurge>0 && parts.length<160 && Math.random()<0.6){
-          parts.push({x:lx,y:ly,vx:(Math.random()-0.5)*6*DPR,vy:(-Math.random()*7-2)*DPR,life:1,
-            c:[G,C,P][Math.floor(Math.random()*3)]});
-        }
-      }
-
-      // --- particles ---
-      for(const pt of parts){
-        pt.x+=pt.vx; pt.y+=pt.vy; pt.vy+=0.12*DPR; pt.life-=0.018;
-        if(pt.life<=0)continue;
-        ctx.globalAlpha=Math.max(0,pt.life);
-        ctx.fillStyle=pt.c; ctx.shadowColor=pt.c; ctx.shadowBlur=10*DPR;
-        ctx.beginPath(); ctx.arc(pt.x,pt.y,2.4*DPR,0,7); ctx.fill();
-      }
-      ctx.globalAlpha=1; ctx.shadowBlur=0;
-
-      // central radial flash at surge peak
-      if(pSurge>0){
-        const fl=Math.sin(pSurge*Math.PI);
-        const rg=ctx.createRadialGradient(cx,baseY-H*0.12,0,cx,baseY-H*0.12,H*0.5);
-        rg.addColorStop(0,`rgba(20,241,149,${0.18*fl})`);
-        rg.addColorStop(1,'rgba(20,241,149,0)');
-        ctx.fillStyle=rg; ctx.fillRect(0,0,W,H);
-      }
-
-      // logo fade/scale in
-      if(pLogo>0 && !logo.classList.contains('show')) logo.classList.add('show');
-
-      if(t>=1 && !done){ finish(); return; }
-      if(!done) requestAnimationFrame(frame);
-    }
-
-    function finish(){
-      if(done)return; done=true;
-      overlay.classList.add('done');
-      // start the 3D backdrop now (in case it was waiting)
-      if(window.__init3d) try{window.__init3d();}catch(e){}
-      setTimeout(()=>{overlay.style.display='none';},800);
-    }
-    skip&&skip.addEventListener('click',finish);
-    requestAnimationFrame(frame);
-  })();
-
-
-  /* ---------- scroll reveal ---------- */
-  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}})},{threshold:.12});
-  document.querySelectorAll('.reveal').forEach((el,i)=>{el.style.transitionDelay=(i%6*0.05)+'s';io.observe(el);});
-
-  /* ---------- cursor-tilt on hero terminal ---------- */
-  const tilt=document.getElementById('tilt'), glass=document.getElementById('termGlass');
-  if(window.matchMedia('(pointer:fine)').matches){
-    tilt.addEventListener('mousemove',e=>{
-      const r=tilt.getBoundingClientRect();
-      const x=(e.clientX-r.left)/r.width-0.5, y=(e.clientY-r.top)/r.height-0.5;
-      glass.style.transform=`rotateX(${8-y*12}deg) rotateY(${x*14}deg)`;
-    });
-    tilt.addEventListener('mouseleave',()=>{glass.style.transform='rotateX(8deg)';});
-  }
-
-  /* ---------- feature/plan card glow follow ---------- */
-  document.querySelectorAll('.tilt-card').forEach(c=>{
-    c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();
-      c.style.setProperty('--mx',((e.clientX-r.left)/r.width*100)+'%');
-      c.style.setProperty('--my',((e.clientY-r.top)/r.height*100)+'%');});
-  });
-
-  /* ---------- 3D scene ---------- */
-  window.__init3d=function(){
-    if(window.__scene3dStarted)return; 
-    if(typeof THREE==='undefined')return;
-    window.__scene3dStarted=true;
-    const canvas=document.getElementById('scene');
-    const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true});
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
-    const scene=new THREE.Scene();
-    scene.fog=new THREE.FogExp2(0x05070b,0.055);
-    const camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,100);
-    camera.position.set(0,0,18);
-
-    const isMobile=innerWidth<700;
-
-    // --- candlestick field ---
-    const candles=new THREE.Group();
-    const COLS=isMobile?9:16, ROWS=isMobile?5:7;
-    const matUp=new THREE.MeshBasicMaterial({color:0x14f195,transparent:true,opacity:.85});
-    const matDn=new THREE.MeshBasicMaterial({color:0x9945ff,transparent:true,opacity:.8});
-    const wickMat=new THREE.MeshBasicMaterial({color:0x44506a,transparent:true,opacity:.5});
-    const data=[];
-    for(let i=0;i<COLS;i++){
-      const up=Math.random()>0.45;
-      const h=0.5+Math.random()*2.4;
-      const body=new THREE.Mesh(new THREE.BoxGeometry(0.34,h,0.34),up?matUp:matDn);
-      const wick=new THREE.Mesh(new THREE.BoxGeometry(0.06,h+0.7+Math.random(),0.06),wickMat);
-      const x=(i-(COLS-1)/2)*1.15;
-      const baseY=Math.sin(i*0.5)*1.6;
-      const g=new THREE.Group(); g.add(wick); g.add(body);
-      g.position.set(x,baseY,-2-Math.random()*4);
-      candles.add(g);
-      data.push({g,body,baseY,h,phase:Math.random()*6.28,up});
-    }
-    scene.add(candles);
-
-    // --- particle starfield/grid ---
-    const pCount=isMobile?260:600;
-    const pg=new THREE.BufferGeometry();
-    const pos=new Float32Array(pCount*3);
-    for(let i=0;i<pCount;i++){
-      pos[i*3]=(Math.random()-0.5)*60;
-      pos[i*3+1]=(Math.random()-0.5)*40;
-      pos[i*3+2]=(Math.random()-0.5)*40-10;
-    }
-    pg.setAttribute('position',new THREE.BufferAttribute(pos,3));
-    const pm=new THREE.PointsMaterial({color:0x22d3ee,size:0.06,transparent:true,opacity:.6});
-    const points=new THREE.Points(pg,pm);
-    scene.add(points);
-
-    // --- glowing floor grid ---
-    const grid=new THREE.GridHelper(80,40,0x14f195,0x1a2433);
-    grid.position.y=-7; grid.material.transparent=true; grid.material.opacity=.18;
-    scene.add(grid);
-
-    // mouse parallax
-    let mx=0,my=0,tmx=0,tmy=0;
-    addEventListener('mousemove',e=>{tmx=(e.clientX/innerWidth-0.5);tmy=(e.clientY/innerHeight-0.5);});
-    let scrollY=0; addEventListener('scroll',()=>{scrollY=window.scrollY;});
-
-    const clock=new THREE.Clock();
-    function animate(){
-      const t=clock.getElapsedTime();
-      mx+=(tmx-mx)*0.04; my+=(tmy-my)*0.04;
-      // candles breathe + float
-      data.forEach((d,i)=>{
-        const s=1+Math.sin(t*0.8+d.phase)*0.18;
-        d.body.scale.y=s;
-        d.g.position.y=d.baseY+Math.sin(t*0.5+d.phase)*0.35;
-        d.g.rotation.y=Math.sin(t*0.2+i)*0.15;
-      });
-      candles.rotation.y=mx*0.4+t*0.03;
-      candles.rotation.x=my*0.2;
-      points.rotation.y=t*0.02+mx*0.2;
-      points.rotation.x=my*0.1;
-      // camera drift + subtle scroll dolly
-      camera.position.x+=((mx*3)-camera.position.x)*0.04;
-      camera.position.y+=((-my*2 - scrollY*0.004)-camera.position.y)*0.04;
-      camera.lookAt(0,0,-3);
-      renderer.render(scene,camera);
-      requestAnimationFrame(animate);
-    }
-    function resize(){renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();}
-    addEventListener('resize',resize); resize(); animate();
-  };
-  window.__init3d();
-})();</script>
 <script>
 function aryxEnterApp(){
   var l=document.getElementById('aryxLanding');
